@@ -169,3 +169,19 @@ index 0000000..1d360e3
 +// expand them to nothing. Harmless for real C compilation (clang knows them).
 +#define _Nullable
 +#define _Nonnull
+diff --git a/packages/native/build.zig b/packages/native/build.zig
+index 5afd8c4..3ec3c48 100644
+--- a/packages/native/build.zig
++++ b/packages/native/build.zig
+@@ -366,9 +366,9 @@ fn addNativeAudioDependencies(
+     switch (target.result.os.tag) {
+         .macos => addMacOSSystemLibraries(b, module, macos_sdk_path.?),
+         .linux => {
+-            module.linkSystemLibrary("dl", .{});
+             if (!target.result.abi.isAndroid()) {
+-                // bionic libc already contains pthread/m; separate libs only exist on glibc/musl
++                // bionic libc already contains dl/pthread/m; separate libs only exist on glibc/musl
++                module.linkSystemLibrary("dl", .{});
+                 module.linkSystemLibrary("pthread", .{});
+                 module.linkSystemLibrary("m", .{});
+             }
