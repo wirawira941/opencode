@@ -8,6 +8,9 @@ const entrypoint = process.argv[1] ? path.resolve(process.argv[1]) : undefined
 // argv[0]. /proc/self/exe points at the real binary.
 function androidExecutable(): string | undefined {
   if (process.platform !== "android") return undefined
+  // The termux wrapper exports OPENCODE_BIN with the real binary path.
+  const fromEnv = process.env.OPENCODE_BIN
+  if (fromEnv) return fromEnv
   try {
     const exe = fs.readlinkSync("/proc/self/exe")
     if (exe && exe !== process.execPath) return exe
