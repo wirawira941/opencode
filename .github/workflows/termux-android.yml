@@ -169,7 +169,7 @@ jobs:
           # lean (TUI is the primary interface on Termux).
           # Stamp the upstream release version so version-gated features
           # (e.g. free tier) work instead of reporting 0.0.0.
-          OPENCODE_VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          OPENCODE_VERSION="$(node -p "require('./packages/package.json').version")"
           export OPENCODE_VERSION
           bun run script/build.ts \
             --target=opencode-android-arm64 \
