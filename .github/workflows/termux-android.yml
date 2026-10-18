@@ -1,0 +1,221 @@
+# Build opencode natively for Android/Termux (aarch64).
+#
+# Produces opencode-termux-android-aarch64.zip containing a genuine Android
+# binary (built with Bun's official android target) plus the Android-built
+# libopentui.so, a Termux wrapper script, and an installer.
+#
+# Trigger: Actions tab -> "termux-android" -> Run workflow.
+# See TERMUX.md for background, install instructions, and troubleshooting.
+#
+# This recipe is adapted from guysoft/opencode-termux (MIT), which pioneered
+# the Android/Termux build. Thanks to that project for the NDK+Zig approach,
+# the bionic build.zig patch, and the wrapper-script lessons.
+
+name: termux-android
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref of this fork to build (branch, tag, or SHA)"
+        required: false
+        default: "termux-android"
+      opentui_version:
+        description: "OpenTUI version to compile (should match @opentui/core)"
+        required: false
+        default: "0.5.17"
+      create_release:
+        description: "Attach the zip to a GitHub release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # required only when create_release is true
+
+env:
+  BUN_VERSION: "1.4.2"
+  ZIG_VERSION: "0.16.0"
+  ANDROID_NDK_VERSION: "r28c"
+  ANDROID_API: "29"
+
+jobs:
+  build:
+    name: Build for Android aarch64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          cd /tmp
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o zig.tar.xz
+          mkdir -p "$HOME/zig"
+          tar xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+          "$HOME/zig/zig" version
+
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          NDK_DIR="$HOME/android-ndk"
+          if [ ! -d "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64" ]; then
+            cd /tmp
+            curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -o ndk.zip
+            unzip -q ndk.zip -d /tmp
+            mv "/tmp/android-ndk-${ANDROID_NDK_VERSION}" "$NDK_DIR"
+            rm ndk.zip
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          ls "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+
+      - name: Build OpenTUI for Android
+        env:
+          OPENTUI_VERSION: ${{ inputs.opentui_version }}
+        run: |
+          set -euo pipefail
+          WORK="$HOME/opentui-android"
+          mkdir -p "$WORK"
+          if [ ! -d "$WORK/src/.git" ]; then
+            git clone --depth 1 --branch "v$OPENTUI_VERSION" \
+              https://github.com/anomalyco/opentui.git "$WORK/src"
+          fi
+
+          # Android/bionic adaptations (vendored, adapted from
+          # guysoft/opencode-termux under MIT — see the patch header).
+          cd "$WORK/src"
+          if git apply --check "$GITHUB_WORKSPACE/termux/patches/opentui-android.patch"; then
+            git apply "$GITHUB_WORKSPACE/termux/patches/opentui-android.patch"
+            echo "Applied Android patch to OpenTUI $OPENTUI_VERSION"
+          else
+            echo "::warning::Android patch did not apply cleanly to OpenTUI $OPENTUI_VERSION; attempting unpatched Zig build"
+          fi
+
+          # Merged bionic sysroot: NDK includes flattened + nullability shims,
+          # because Zig ships no bionic libc headers of its own.
+          NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          BIONIC_INC="$WORK/bionic-include"
+          rm -rf "$BIONIC_INC"
+          mkdir -p "$BIONIC_INC" "$BIONIC_INC/yoga" "$BIONIC_INC/__opentui"
+          cp -a "$NDK_SYSROOT/usr/include/." "$BIONIC_INC/"
+          cp -a "$NDK_SYSROOT/usr/include/aarch64-linux-android/." "$BIONIC_INC/"
+          SRC="$WORK/src/packages/native"
+          cp -a "$SRC/src/vendor/miniaudio/miniaudio.h" "$BIONIC_INC/miniaudio.h"
+          cp -a "$SRC/zig-deps/yoga/yoga" "$BIONIC_INC/yoga/yoga"
+          cat > "$BIONIC_INC/__opentui/miniaudio_shimmed.h" <<'EOF'
+          #define _Nullable
+          #define _Nonnull
+          #include "../miniaudio.h"
+          EOF
+          cat > "$BIONIC_INC/__opentui/Yoga_shimmed.h" <<'EOF'
+          #define _Nullable
+          #define _Nonnull
+          #include "../yoga/yoga/Yoga.h"
+          EOF
+          cat > "$WORK/bionic-libc.txt" <<EOF
+          include_dir=$BIONIC_INC
+          sys_include_dir=$BIONIC_INC
+          crt_dir=$NDK_SYSROOT/usr/lib/aarch64-linux-android/$ANDROID_API
+          msvc_lib_dir=
+          kernel32_lib_dir=
+          gcc_dir=
+          EOF
+
+          export BIONIC_SYSROOT_INC="$BIONIC_INC"
+          export ZIG_LIBC="$WORK/bionic-libc.txt"
+          cd "$SRC"
+          "$HOME/zig/zig" build \
+            -Dlibrary-target=aarch64-linux-android \
+            -Doptimize=ReleaseSafe
+          cp "lib/aarch64-linux-android/libopentui.so" "$WORK/libopentui.so"
+          cp "$NDK_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" "$WORK/libc++_shared.so"
+          echo "OPENTUI_DIST=$WORK" >> "$GITHUB_ENV"
+          file "$WORK/libopentui.so"
+
+      - name: Build opencode CLI for Android
+        run: |
+          set -euo pipefail
+          bun install
+          # @parcel/watcher has no Android binding; the bundler needs a
+          # resolvable module. The stub throws on load, which the upstream
+          # try/catch in watcher.ts handles (watcher stays disabled on
+          # Android via OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER).
+          STUB="packages/core/node_modules/@parcel/watcher-android-arm64"
+          mkdir -p "$STUB"
+          cat > "$STUB/package.json" <<'EOF2'
+          { "name": "@parcel/watcher-android-arm64", "version": "2.5.1", "main": "watcher.js" }
+          EOF2
+          cat > "$STUB/watcher.js" <<'EOF2'
+          throw new Error("@parcel/watcher has no Android native binding (termux-android stub)")
+          EOF2
+          cd packages/cli
+          # --target=opencode-android-arm64 is the termux-android target added
+          # to script/build.ts in this fork. --skip-web-ui keeps the build
+          # lean (TUI is the primary interface on Termux).
+          # Stamp the upstream release version so version-gated features
+          # (e.g. free tier) work instead of reporting 0.0.0.
+          OPENCODE_VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          export OPENCODE_VERSION
+          bun run script/build.ts \
+            --target=opencode-android-arm64 \
+            --skip-web-ui \
+            --outdir="$HOME/opencode-dist"
+          file "$HOME/opencode-dist/cli-android-arm64/bin/opencode"
+
+      - name: Package Termux zip
+        run: |
+          set -euo pipefail
+          PKG="$HOME/termux-pkg"
+          rm -rf "$PKG"
+          mkdir -p "$PKG"
+          cp "$HOME/opencode-dist/cli-android-arm64/bin/opencode" "$PKG/opencode.bin"
+          chmod 755 "$PKG/opencode.bin"
+          cp "$OPENTUI_DIST/libopentui.so" "$OPENTUI_DIST/libc++_shared.so" "$PKG/"
+          cp "$GITHUB_WORKSPACE/termux/bin/opencode" "$PKG/opencode"
+          cp "$GITHUB_WORKSPACE/termux/install.sh" "$PKG/install.sh"
+          cp "$GITHUB_WORKSPACE/TERMUX.md" "$PKG/TERMUX.md"
+          chmod 755 "$PKG/opencode" "$PKG/install.sh"
+          {
+            echo "opencode Termux build"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "ref: ${{ inputs.ref }}"
+            echo "bun: ${{ env.BUN_VERSION }}"
+            echo "opentui: ${{ inputs.opentui_version }}"
+            echo "ndk: ${{ env.ANDROID_NDK_VERSION }} (api ${{ env.ANDROID_API }})"
+            echo "zig: ${{ env.ZIG_VERSION }}"
+            echo "commit: ${{ github.sha }}"
+          } > "$PKG/BUILD_INFO.txt"
+          cd "$PKG"
+          zip -9 "$HOME/opencode-termux-android-aarch64.zip" \
+            opencode opencode.bin libopentui.so libc++_shared.so \
+            install.sh TERMUX.md BUILD_INFO.txt
+          unzip -l "$HOME/opencode-termux-android-aarch64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-termux-android-aarch64
+          path: ~/opencode-termux-android-aarch64.zip
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: ${{ inputs.create_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="termux-${{ github.run_number }}"
+          gh release create "$TAG" \
+            "$HOME/opencode-termux-android-aarch64.zip" \
+            --title "opencode for Termux (Android aarch64) #$TAG" \
+            --notes "Native Android/Termux build from ${{ inputs.ref }}. See TERMUX.md inside the zip for install instructions."
