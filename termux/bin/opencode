@@ -38,6 +38,9 @@ for candidate in \
   "$PREFIX/libexec/opencode/opencode.bin" \
   "$DIR/opencode.bin"; do
   if [ -x "$candidate" ]; then
+    # termux-android: tell the binary its real path (Bun reports linker64 as
+    # execPath on Android, breaking selfCommand() for background spawning).
+    export OPENCODE_BIN="$candidate"
     exec "$candidate" "$@"
   fi
 done
