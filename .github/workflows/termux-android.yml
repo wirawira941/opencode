@@ -101,6 +101,10 @@ jobs:
           else
             echo "::warning::Android patch did not apply cleanly to OpenTUI $OPENTUI_VERSION; attempting unpatched Zig build"
           fi
+          
+          # Prepare Zig dependencies (yoga, etc.) - required before build
+          sh packages/native/scripts/prepare-zig-deps.sh
+
 
           # Merged bionic sysroot: NDK includes flattened + nullability shims,
           # because Zig ships no bionic libc headers of its own.
