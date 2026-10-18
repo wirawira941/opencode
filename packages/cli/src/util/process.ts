@@ -1,8 +1,23 @@
 import path from "node:path"
+import fs from "node:fs"
 
 const entrypoint = process.argv[1] ? path.resolve(process.argv[1]) : undefined
 
+// termux-android: on Android, Bun reports the dynamic linker
+// (/apex/com.android.runtime/bin/linker64) as process.execPath and "bun" as
+// argv[0]. /proc/self/exe points at the real binary.
+function androidExecutable(): string | undefined {
+  if (process.platform !== "android") return undefined
+  try {
+    const exe = fs.readlinkSync("/proc/self/exe")
+    if (exe && exe !== process.execPath) return exe
+  } catch {}
+  return undefined
+}
+
 export function selfCommand() {
+  const android = androidExecutable()
+  if (android) return [android]
   const runtime = path.basename(process.execPath, path.extname(process.execPath)).toLowerCase()
   if (runtime !== "bun" && runtime !== "node" && runtime !== "nodejs") return [process.execPath]
   if (!entrypoint) throw new Error("Failed to resolve CLI entrypoint")
