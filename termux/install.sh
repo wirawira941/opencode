@@ -10,8 +10,8 @@ echo "Installing opencode to $PREFIX ..."
 
 mkdir -p "$PREFIX/bin" "$PREFIX/libexec/opencode"
 
-# Wrapper goes on PATH
-cp "$HERE/bin/opencode" "$PREFIX/bin/opencode"
+# Wrapper goes on PATH (flat zip layout: wrapper sits next to this script)
+cp "$HERE/opencode" "$PREFIX/bin/opencode"
 chmod 755 "$PREFIX/bin/opencode"
 
 # Binary + native libraries live outside PATH
