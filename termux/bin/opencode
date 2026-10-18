@@ -1,0 +1,46 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# opencode - launcher for the Termux/Android build (see TERMUX.md)
+#
+# Locates the Android-built native libraries next to the binary and sets up
+# the environment so the prebuilt binary runs natively (no proot required).
+set -eu
+
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+DIR="$(CDPATH= cd -- "$(dirname "$SELF")" && pwd)"
+
+# Termux prefix, in case we are launched outside a Termux shell.
+export PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+
+# Layouts supported:
+#   installed: $PREFIX/bin/opencode + $PREFIX/libexec/opencode/{opencode.bin,libopentui.so,libc++_shared.so}
+#   flat zip:  opencode, opencode.bin, libopentui.so, libc++_shared.so in one directory
+LIBDIR=""
+for candidate in "$DIR/../libexec/opencode" "$PREFIX/libexec/opencode" "$DIR"; do
+  if [ -f "$candidate/libopentui.so" ]; then
+    LIBDIR="$candidate"
+    break
+  fi
+done
+
+if [ -n "$LIBDIR" ]; then
+  # Point OpenTUI at the Android-built native library (the fork's TUI reads
+  # OPENTUI_LIB_PATH before any renderer is created).
+  export OPENTUI_LIB_PATH="$LIBDIR/libopentui.so"
+  export LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# @parcel/watcher ships no Android native binding; disable the file watcher
+# on Termux to avoid a dlopen architecture mismatch.
+export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER="${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-true}"
+
+for candidate in \
+  "$DIR/../libexec/opencode/opencode.bin" \
+  "$PREFIX/libexec/opencode/opencode.bin" \
+  "$DIR/opencode.bin"; do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+echo "opencode: error: could not find opencode.bin" >&2
+exit 127
