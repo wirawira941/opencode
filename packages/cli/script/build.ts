@@ -52,6 +52,8 @@ const allTargets: {
   { os: "win32", arch: "arm64" },
   { os: "win32", arch: "x64" },
   { os: "win32", arch: "x64", avx2: false },
+  // termux-android: unofficial Android/Termux target, see TERMUX.md
+  { os: "android", arch: "arm64" },
 ]
 
 const targets =
@@ -230,15 +232,20 @@ async function compileExecutable(item: (typeof allTargets)[number]) {
   if (!release) return
 
   const platform = item.os === "win32" ? "windows" : item.os
-  const name = [
-    "bun",
-    platform,
-    item.arch === "arm64" ? "aarch64" : item.arch,
-    item.abi,
-    item.avx2 === false ? "baseline" : undefined,
-  ]
-    .filter(Boolean)
-    .join("-")
+  // termux-android: Bun's official Android release asset is named
+  // "bun-linux-aarch64-android", not "bun-android-aarch64".
+  const name =
+    item.os === "android"
+      ? "bun-linux-aarch64-android"
+      : [
+          "bun",
+          platform,
+          item.arch === "arm64" ? "aarch64" : item.arch,
+          item.abi,
+          item.avx2 === false ? "baseline" : undefined,
+        ]
+          .filter(Boolean)
+          .join("-")
   const cache = path.join(outdir, ".bun", release)
   const executable = path.join(cache, name, item.os === "win32" ? "bun.exe" : "bun")
   if (await Bun.file(executable).exists()) return executable
@@ -306,3 +313,4 @@ function targetName(item: (typeof allTargets)[number]) {
     .filter(Boolean)
     .join("-")
 }
+
