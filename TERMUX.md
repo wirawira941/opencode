@@ -93,3 +93,14 @@ Then configure an AI provider (`opencode auth login`, or export e.g.
   (MIT). The patch in `termux/patches/` is adapted from that project; see
   its header for details.
 - Bun's official Android target: [oven-sh/bun](https://github.com/oven-sh/bun)
+
+## Build notes (from the reference VM build, 2026-10-18)
+
+- OpenTUI 0.5.17 requires **Zig 0.16.0+** (`minimum_zig_version` in its
+  `build.zig.zon`); Zig 0.15.x fails with std API errors.
+- The vendored patch also skips linking `libdl` on Android (bionic keeps
+  `dlopen` in libc, like `pthread`/`m`).
+- `@parcel/watcher` ships no Android binding, so the CLI build needs a tiny
+  stub package at `packages/core/node_modules/@parcel/watcher-android-arm64`
+  (it throws on load; the upstream try/catch keeps the watcher disabled).
+  The wrapper sets `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true` anyway.
